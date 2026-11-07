@@ -177,6 +177,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;heigh
 .seg{display:flex;gap:6px;background:rgba(255,255,255,.05);padding:4px;border-radius:13px;border:1px solid var(--line)}
 .seg div{flex:1;text-align:center;padding:7px 0;border-radius:9px;font-size:13px;cursor:pointer;color:var(--tx2)}
 .seg div.on{background:var(--grad);color:#08111c;font-weight:600}
+/* v1.3.324：互斥锁 —— ALC 开启时固定增益置灰不可点 */
+.seg.lock{opacity:.38}
+.seg.lock div{cursor:not-allowed}
 
 /* 日志 */
 .log{font:12px/1.6 ui-monospace,"SFMono-Regular",Consolas,monospace;white-space:pre-wrap;word-break:break-all;
@@ -412,7 +415,7 @@ body.embed .wrap{max-width:none;padding:0 8px 8px}
     </div>
 
     <div class="card">
-      <div class="ttl">灯光控制 <span class="hint">三项各自独立</span></div>
+      <div class="ttl">灯光控制 <span class="hint">四项各自独立</span></div>
       <div class="row">
         <div><div class="lb">氛围灯</div><div class="ds">彩色灯效（随音乐频谱变色），跑在 player 里</div></div>
         <div class="sw" id="swAmb" onclick="ambToggle()"></div>
@@ -424,6 +427,13 @@ body.embed .wrap{max-width:none;padding:0 8px 8px}
       <div class="row">
         <div><div class="lb">播报灯</div><div class="ds">识别中与小智说话期间的蓝色氛围环</div></div>
         <div class="sw" id="swBsL" onclick="tg('swBsL','busyLight')"></div>
+      </div>
+      <!-- v1.3.204：聆听灯 —— 同一组拾音灯，但跟着「小智在听」走：
+           建连/聆听时亮，思考与播报时灭，说完话回到聆听再亮。
+           关掉它只影响「全程亮着」，唤醒那一闪照旧。 -->
+      <div class="row">
+        <div><div class="lb">聆听灯</div><div class="ds">小智在听就亮（同一组拾音灯），思考/播报/说完收工就灭</div></div>
+        <div class="sw" id="swLsL" onclick="tg('swLsL','listenLight')"></div>
       </div>
       <div class="note" style="margin-top:8px">★ 氛围灯的<b>效果模式</b>与<b>自定义颜色</b>已移除：
         总线 what=4 的 <b>arg1=68</b>（官方/七彩/旋转/单色）与 <b>70</b>（颜色）在
@@ -671,9 +681,22 @@ function tg(id, key) {
   var e = $(id);
   var on = e.className.indexOf("on") < 0;
   e.className = "sw" + (on ? " on" : "");
+  if (key === "alc") applyGainLock(on);
   setKV(key, on ? "on" : "off");
 }
 function setSw(id, on) { $(id).className = "sw" + (on ? " on" : ""); }
+/* v1.3.324：ALC 与固定增益互斥 —— ALC 开着时固定增益根本不参与运算（见 AudioCapture
+   的 if (alcEnabled) 分支），界面上却还能点，用户会以为「调了没反应 / 调坏了」。
+   这里把整段置灰并拒绝点击，把互斥关系直接做进 UI。 */
+function applyGainLock(on) {
+  var g = $("segGain");
+  if (!g) return;
+  g.className = "seg" + (on ? " lock" : "");
+}
+function gainLocked() {
+  var g = $("segGain");
+  return !!(g && g.className.indexOf("lock") >= 0);
+}
 
 /* 采集链路（只读）：AEC / uscTap 两个 flag 不提供开关 —— 它们只会把链路改坏，
    这里只如实回显实际值，异常项标黄，方便发现 flag 被手工 touch 过。 */
@@ -1172,12 +1195,15 @@ function load() {
     // 灯光控制（v1.3.168）：唤醒灯 / 播报灯是 device 侧的 files flag，默认都开
     setSw("swWkL", a.wakeLight !== false);
     setSw("swBsL", a.busyLight !== false);
+    // v1.3.204：聆听灯（拾音灯跟随「小智在听」），同样默认开
+    setSw("swLsL", a.listenLight !== false);
 
     // 增益
     var gd = $("segGain").children;
     for (var i = 0; i < gd.length; i++) {
       gd[i].className = (+gd[i].getAttribute("data-v") === a.gain) ? "on" : "";
     }
+    applyGainLock(!!a.alc);
     fillChain(a);
 
     // 音量：WS 在线时由 get_info 覆盖；离线才用自有值（自有是 0~100 百分比，要换算成档位）
@@ -1551,7 +1577,10 @@ function wsDemo() {
   var gd = $("segGain").children;
   for (var i = 0; i < gd.length; i++) {
     (function (el) {
-      el.onclick = function () { setKV("gain", el.getAttribute("data-v")); };
+      el.onclick = function () {
+        if (gainLocked()) { toast("ALC 已开启，固定增益不参与"); return; }
+        setKV("gain", el.getAttribute("data-v"));
+      };
     })(gd[i]);
   }
   setSw("swChat", chatOnly);

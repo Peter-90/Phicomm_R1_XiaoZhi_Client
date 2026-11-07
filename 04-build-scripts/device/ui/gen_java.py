@@ -16,6 +16,7 @@ r"""
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -23,7 +24,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "ui.html")
 OUT = os.path.join(HERE, "..", "v2src", "cn", "workbuddy", "r1client", "UiModern.java")
 CHUNK_BYTES = 22000          # 每块上限（字节，UTF-8）
-NODE = r"C:\Users\shaoh\.workbuddy\binaries\node\versions\22.22.2-6\node.exe"
+# node 只用于 JS 语法自检（可选）：$NODE → PATH 里的 node → 找不到就跳过检查
+NODE = (os.environ.get("NODE")
+        or shutil.which("node")
+        or shutil.which("node.exe")
+        or r"C:\Users\shaoh\.workbuddy\binaries\node\versions\22.22.2-6\node.exe")
 
 
 def esc_java(s: str) -> str:
