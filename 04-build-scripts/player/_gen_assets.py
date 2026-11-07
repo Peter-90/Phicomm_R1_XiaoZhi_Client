@@ -5,8 +5,16 @@
 """
 import io, os
 
-SRC = r"C:\Users\shaoh\WorkBuddy\R1\janus_pandora2\v2src\cn\workbuddy\r1client\WebConsole.java"
-DST = r"C:\Users\shaoh\WorkBuddy\R1\janus_player2\plsrc\cn\workbuddy\r1web\Assets.java"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_R1 = os.path.dirname(_HERE)
+_REL = os.path.join("v2src", "cn", "workbuddy", "r1client", "WebConsole.java")
+# 2026-11-07：device 侧源码可能有两种布局 —— 发布源码包是 源码/device/，
+#   开发工作树是 R1/janus_pandora2/。按顺序挑第一个存在的，别再写死。
+_cands = [os.path.join(_R1, "device", _REL), os.path.join(_R1, "janus_pandora2", _REL)]
+SRC = next((p for p in _cands if os.path.isfile(p)), "")
+if not SRC:
+    raise SystemExit("找不到 device 侧 WebConsole.java，试过：\n  " + "\n  ".join(_cands))
+DST = os.path.join(_HERE, "plsrc", "cn", "workbuddy", "r1web", "Assets.java")
 
 lines = io.open(SRC, encoding="utf-8").read().split("\n")
 
@@ -33,8 +41,21 @@ def block(start_kw):
 
 
 donate = block("DONATE_QR_B64")
+group = block("GROUP_QR_B64")
 manif = block("MANIFEST_JSON")
 swjs = block("SW_JS")
+
+# ★ 玩家端 Service Worker 缓存壳：缓存名随 Boot.VER 走 —— WebSrv 下发 /sw.js 时把
+#   __VER__ 替换成版本号（见 WebSrv.java /sw.js 分支）。activate 按前缀 r1-shell- 删
+#   旧壳 ⇒ 每次装机换版本，浏览器自动丢掉旧壳，不再「点横幅只更新一半」。
+#   只在抽取阶段改，device 侧源（8088 已废弃）不动。
+_swjs_txt = "\n".join(swjs)
+_swjs_txt = _swjs_txt.replace(
+    "var CACHE='r1-shell-v1';", "var CACHE='r1-shell-__VER__';")
+_swjs_txt = _swjs_txt.replace(
+    "if(k!==CACHE) return caches.delete(k);",
+    "if(k.indexOf('r1-shell-')===0 && k!==CACHE) return caches.delete(k);")
+swjs = _swjs_txt.split("\n")
 
 
 def reindent(b, pad):
@@ -106,11 +127,24 @@ public final class Assets {
 body = []
 body += reindent(donate, "    ")
 body.append("")
+body += reindent(group, "    ")
+body.append("")
 body += reindent(manif, "    ")
 body.append("")
 body += reindent(swjs, "    ")
 body.append(ICON)
 body.append("    private Assets() {\n    }\n}\n")
 
+# 2026-10-29：已存在文件的覆盖写会被杀软/句柄锁拒 ⇒ 先 mv 走旧文件再写
+try:
+    if os.path.exists(DST):
+        os.rename(DST, DST + ".stale")
+except Exception:
+    pass
 io.open(DST, "w", encoding="utf-8", newline="").write(HEAD + "\n".join(body))
+try:
+    if os.path.exists(DST + ".stale"):
+        os.remove(DST + ".stale")
+except Exception:
+    pass
 print("wrote", DST, os.path.getsize(DST), "bytes")
